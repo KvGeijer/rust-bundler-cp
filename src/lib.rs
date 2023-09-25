@@ -111,7 +111,7 @@ impl<'a> Expander<'a> {
         let mut new_items = vec![];
         for mut item in items.drain(..) {
             if let syn::Item::Use(ref mut use_item) = item {
-                if !trim_use_tree(&mut use_item.tree, self.crate_name) {
+                if !adapt_use_tree(&mut use_item.tree, self.crate_name, true) {
                     continue;
                 }
             }
@@ -279,29 +279,38 @@ fn path_starts_with(path: &syn::Path, segment: &str) -> bool {
     false
 }
 
-/// Trims the crate name from use paths, returning true if it is still a valid path
-fn trim_use_tree(use_tree: &mut syn::UseTree, crate_name: &str) -> bool {
+/// Adapts the use tree to handle the merge of the binary and library.
+/// Returns bool of whether it is still a vaild non-empty use tree.
+fn adapt_use_tree(use_tree: &mut syn::UseTree, crate_name: &str, top_scope: bool) -> bool {
     match use_tree {
-        syn::UseTree::Path(ref path) => {
-            if path.ident == crate_name {
-                // Trim the tree, removing the first path which has now been expanded
-                // ERROR: This is not perfect and does not perfectly handle use statements in sub-modules in main
-                *use_tree = *path.tree.clone();
-                retain_trimmed_tree(use_tree)
-            } else {
-                // TODO: Binary sub-crates
-                // TODO: Crate::lib
-                true
-            }
+        syn::UseTree::Path(ref mut path) if path.ident == crate_name && top_scope => {
+            // Trim away the reference to the lib, as it will be merged into the top_scope
+            *use_tree = *path.tree.clone(); // Clone needed for borrow checker
+            retain_adapted_use_tree(use_tree)
         }
-        syn::UseTree::Name(_) | syn::UseTree::Glob(_) => true,
-        syn::UseTree::Rename(_) => true, // TODO: The expanded library can be re-named
+        syn::UseTree::Path(ref mut path) if path.ident == crate_name => {
+            // Change the path from lib to "crate" as it will be merged into the top level scope
+            let crate_ident = syn::Ident::new("crate", path.ident.span());
+            let crate_path = syn::UsePath {
+                ident: crate_ident,
+                colon2_token: path.colon2_token.clone(),
+                tree: path.tree.clone(),
+            };
+            *path = crate_path;
+            retain_adapted_use_tree(use_tree)
+        }
+        syn::UseTree::Path(ref mut path) if path.ident == "crate" => {
+            // Handle edge case of "use crate::my_lib::<...>", where we must trim the lib segment only
+            adapt_use_tree(&mut path.tree, crate_name, top_scope)
+        }
+        syn::UseTree::Path(_) | syn::UseTree::Name(_) | syn::UseTree::Glob(_) => true,
+        syn::UseTree::Rename(_) => true, // TODO: We don't support tricky renamings of expanded library
         syn::UseTree::Group(group) => {
             // Filter group recursively and trim all sub-trees
             group.items = mem::replace(&mut group.items, Punctuated::new())
                 .into_pairs()
                 .filter_map(|mut pair| {
-                    if trim_use_tree(&mut pair.value_mut(), crate_name) {
+                    if adapt_use_tree(&mut pair.value_mut(), crate_name, top_scope) {
                         Some(pair)
                     } else {
                         None
@@ -313,17 +322,18 @@ fn trim_use_tree(use_tree: &mut syn::UseTree, crate_name: &str) -> bool {
     }
 }
 
-/// Called on a trimmed use-tree to know whether it should be kept, and also removes redundand branches
-fn retain_trimmed_tree(item: &mut syn::UseTree) -> bool {
-    match item {
+/// Called on an adapted use-tree and returns whether it should be kept
+fn retain_adapted_use_tree(tree: &mut syn::UseTree) -> bool {
+    match tree {
         syn::UseTree::Path(_) => true,
-        syn::UseTree::Name(_) | syn::UseTree::Rename(_) | syn::UseTree::Glob(_) => false,
+        syn::UseTree::Name(_) | syn::UseTree::Glob(_) => false,
+        syn::UseTree::Rename(_) => false, //TODO: Handle library renaming properly
         syn::UseTree::Group(group) => {
             // Filter group recursively to only keep the valid sub-trees
             group.items = mem::replace(&mut group.items, Punctuated::new())
                 .into_pairs()
                 .filter_map(|mut pair| {
-                    if retain_trimmed_tree(&mut pair.value_mut()) {
+                    if retain_adapted_use_tree(&mut pair.value_mut()) {
                         Some(pair)
                     } else {
                         None
