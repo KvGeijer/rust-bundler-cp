@@ -111,7 +111,7 @@ impl<'a> Expander<'a> {
         let mut new_items = vec![];
         for mut item in items.drain(..) {
             if let syn::Item::Use(ref mut use_item) = item {
-                if !trim_use_path(use_item, self.crate_name) {
+                if !trim_use_tree(&mut use_item.tree, self.crate_name) {
                     continue;
                 }
             }
@@ -280,16 +280,37 @@ fn path_starts_with(path: &syn::Path, segment: &str) -> bool {
 }
 
 /// Trims the crate name from use paths, returning true if it is still a valid path
-fn trim_use_path(use_item: &mut syn::ItemUse, crate_name: &str) -> bool {
-    if let syn::UseTree::Path(ref path) = use_item.tree {
-        if path.ident == crate_name {
-            // Trim the tree, removing the first path which has now been expanded
-            // ERROR: This is not perfect and does not perfectly handle use statements in sub-modules in main
-            use_item.tree = *path.tree.clone();
-            return retain_trimmed_tree(&mut use_item.tree);
+fn trim_use_tree(use_tree: &mut syn::UseTree, crate_name: &str) -> bool {
+    match use_tree {
+        syn::UseTree::Path(ref path) => {
+            if path.ident == crate_name {
+                // Trim the tree, removing the first path which has now been expanded
+                // ERROR: This is not perfect and does not perfectly handle use statements in sub-modules in main
+                *use_tree = *path.tree.clone();
+                retain_trimmed_tree(use_tree)
+            } else {
+                // TODO: Binary sub-crates
+                // TODO: Crate::lib
+                true
+            }
+        }
+        syn::UseTree::Name(_) | syn::UseTree::Glob(_) => true,
+        syn::UseTree::Rename(_) => true, // TODO: The expanded library can be re-named
+        syn::UseTree::Group(group) => {
+            // Filter group recursively and trim all sub-trees
+            group.items = mem::replace(&mut group.items, Punctuated::new())
+                .into_pairs()
+                .filter_map(|mut pair| {
+                    if trim_use_tree(&mut pair.value_mut(), crate_name) {
+                        Some(pair)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            group.items.len() > 0
         }
     }
-    true
 }
 
 /// Called on a trimmed use-tree to know whether it should be kept, and also removes redundand branches
