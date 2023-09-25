@@ -259,6 +259,29 @@ impl<'a> VisitMut for Expander<'a> {
             self.visit_path_segment_mut(it)
         }
     }
+
+    fn visit_use_tree_mut(&mut self, node: &mut syn::UseTree) {
+        adapt_use_tree(node, self.crate_name, false);
+
+        // Normal implementation
+        match node {
+            syn::UseTree::Path(item) => {
+                self.visit_use_path_mut(item);
+            }
+            syn::UseTree::Name(item) => {
+                self.visit_use_name_mut(item);
+            }
+            syn::UseTree::Rename(item) => {
+                self.visit_use_rename_mut(item);
+            }
+            syn::UseTree::Glob(item) => {
+                self.visit_use_glob_mut(item);
+            }
+            syn::UseTree::Group(item) => {
+                self.visit_use_group_mut(item);
+            }
+        }
+    }
 }
 
 fn is_selected_extern_crate(item: &syn::Item, crate_name: &str) -> bool {
@@ -301,7 +324,7 @@ fn adapt_use_tree(use_tree: &mut syn::UseTree, crate_name: &str, top_scope: bool
         }
         syn::UseTree::Path(ref mut path) if path.ident == "crate" => {
             // Handle edge case of "use crate::my_lib::<...>", where we must trim the lib segment only
-            adapt_use_tree(&mut path.tree, crate_name, top_scope)
+            adapt_use_tree(&mut path.tree, crate_name, true)
         }
         syn::UseTree::Path(_) | syn::UseTree::Name(_) | syn::UseTree::Glob(_) => true,
         syn::UseTree::Rename(_) => true, // TODO: We don't support tricky renamings of expanded library
