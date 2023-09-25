@@ -63,7 +63,7 @@ impl<'a> Expander<'a> {
     fn expand_items(&self, items: &mut Vec<syn::Item>) {
         debug!("expand_items, count={}", items.len());
         self.expand_extern_crate(items);
-        self.expand_use_path(items);
+        self.expand_use_paths(items);
     }
 
     fn expand_extern_crate(&self, items: &mut Vec<syn::Item>) {
@@ -107,12 +107,15 @@ impl<'a> Expander<'a> {
         *items = new_items;
     }
 
-    fn expand_use_path(&self, items: &mut Vec<syn::Item>) {
+    fn expand_use_paths(&self, items: &mut Vec<syn::Item>) {
         let mut new_items = vec![];
-        for item in items.drain(..) {
-            if !is_use_path(&item, self.crate_name) {
-                new_items.push(item);
+        for mut item in items.drain(..) {
+            if let syn::Item::Use(ref mut use_item) = item {
+                if !trim_use_path(use_item, self.crate_name) {
+                    continue;
+                }
             }
+            new_items.push(item);
         }
         *items = new_items;
     }
@@ -276,15 +279,39 @@ fn path_starts_with(path: &syn::Path, segment: &str) -> bool {
     false
 }
 
-fn is_use_path(item: &syn::Item, first_segment: &str) -> bool {
-    if let syn::Item::Use(ref item) = *item {
-        if let syn::UseTree::Path(ref path) = item.tree {
-            if path.ident == first_segment {
-                return true;
-            }
+/// Trims the crate name from use paths, returning true if it is still a valid path
+fn trim_use_path(use_item: &mut syn::ItemUse, crate_name: &str) -> bool {
+    if let syn::UseTree::Path(ref path) = use_item.tree {
+        if path.ident == crate_name {
+            // Trim the tree, removing the first path which has now been expanded
+            // ERROR: This is not perfect and does not perfectly handle use statements in sub-modules in main
+            use_item.tree = *path.tree.clone();
+            return retain_trimmed_tree(&mut use_item.tree);
         }
     }
-    false
+    true
+}
+
+/// Called on a trimmed use-tree to know whether it should be kept, and also removes redundand branches
+fn retain_trimmed_tree(item: &mut syn::UseTree) -> bool {
+    match item {
+        syn::UseTree::Path(_) => true,
+        syn::UseTree::Name(_) | syn::UseTree::Rename(_) | syn::UseTree::Glob(_) => false,
+        syn::UseTree::Group(group) => {
+            // Filter group recursively to only keep the valid sub-trees
+            group.items = mem::replace(&mut group.items, Punctuated::new())
+                .into_pairs()
+                .filter_map(|mut pair| {
+                    if retain_trimmed_tree(&mut pair.value_mut()) {
+                        Some(pair)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            group.items.len() > 0
+        }
+    }
 }
 
 fn read_file(path: &Path) -> Option<String> {
