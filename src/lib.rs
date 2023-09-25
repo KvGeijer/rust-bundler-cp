@@ -7,7 +7,7 @@ use syn::__private::ToTokens;
 use syn::punctuated::Punctuated;
 use syn::visit_mut::VisitMut;
 
-use log::{debug, info, error};
+use log::{debug, error, info};
 use std::collections::{HashMap, HashSet};
 
 mod cargo_loader;
@@ -128,12 +128,13 @@ impl<'a> Expander<'a> {
             (self.base_path, format!("{}.rs", name)),
             (&new_style_path, format!("{}.rs", name)),
             (&other_base_path, String::from("mod.rs")),
-        ].into_iter()
-            .flat_map(|(base_path, file_name)| {
-                read_file(&base_path.join(file_name)).map(|code| (base_path, code))
-            })
-            .next()
-            .expect("mod not found");
+        ]
+        .into_iter()
+        .flat_map(|(base_path, file_name)| {
+            read_file(&base_path.join(file_name)).map(|code| (base_path, code))
+        })
+        .next()
+        .expect("mod not found");
         info!("expanding mod {} in {}", name, base_path.to_str().unwrap());
         let mut file = syn::parse_file(&code).expect("failed to parse file");
         Expander::new(base_path, name.as_str(), self.crate_name).visit_file_mut(&mut file);
@@ -179,10 +180,8 @@ impl<'a> Expander<'a> {
                 );
                 self.allow_list_mod_in_lib.contains(&name)
                 // true
-            },
-            _ => {
-                true
             }
+            _ => true,
         }
     }
 }
@@ -193,17 +192,17 @@ fn extract_mods_name(item: &syn::UseTree) -> Vec<String> {
     match item {
         syn::UseTree::Path(p) => {
             //TODO should check  ident: Ident(my_lib) here
-            return extract_mods_name(&*p.tree)
-        },
+            return extract_mods_name(&*p.tree);
+        }
         syn::UseTree::Group(g) => {
             for c in &g.items {
                 let mut mods = extract_mods_name(c);
                 result.append(&mut mods);
             }
-        },
+        }
         syn::UseTree::Name(n) => {
             result.push(n.ident.to_string());
-        },
+        }
         _ => {
             error!(
                 "Unexpected Tree element {}",
@@ -299,7 +298,7 @@ fn read_file(path: &Path) -> Option<String> {
 
 #[cfg(feature = "inner_rustfmt")]
 fn prettify(code: String) -> String {
-    use rustfmt_nightly::{Input, Session, Config, EmitMode, Verbosity};
+    use rustfmt_nightly::{Config, EmitMode, Input, Session, Verbosity};
     let mut out = Vec::with_capacity(code.len() * 2);
     {
         let mut config = Config::default();
@@ -331,7 +330,7 @@ fn prettify(code: String) -> String {
     if !out.status.success() {
         let error_code = match out.status.code() {
             Some(x) => x.to_string(),
-            None => String::from("Error_Code_None")
+            None => String::from("Error_Code_None"),
         };
         let stderr = out.stderr;
         let stderr =
@@ -369,21 +368,21 @@ fn debug_str_item(it: &syn::Item) -> String {
         syn::Item::ExternCrate(_e) => {
             // eprintln!("{:?}", e); //TODO-> too hacky
             "extern_crate"
-        },
+        }
         syn::Item::Use(_e) => {
             // eprintln!("{:?}", e); //TODO-> too hacky
             "use"
-        },
+        }
         syn::Item::Fn(_e) => {
             // eprintln!("{:?}", e); //TODO-> too hacky
             "Fn"
-        },
+        }
         syn::Item::Mod(e) => {
             e.ident.to_string();
             // eprintln!("{:?}", e); //TODO-> too hacky
             // return "Mod(";
             return format!("Mod ({})", e.ident.to_string());
-        },
+        }
         _ => {
             // eprintln!("{:?}", it); //TODO-> too hacky
             "Others"
@@ -397,18 +396,15 @@ pub enum BundlerConfig {
     RemoveUnusedModInLib,
 }
 
-
 /*
 The test cases below is also considered as documents and examples.
 */
 
 #[cfg(test)]
 mod expander_test {
+    use crate::Expander;
     use std::path::Path;
     use syn::File;
-    use crate::Expander;
-
-
 
     #[test]
     fn test_create() {
@@ -429,8 +425,7 @@ mod expander_test {
         expander
     }
 
-
-    fn read_source_code () -> File {
+    fn read_source_code() -> File {
         let src_path = "tests/testdata/input/rust_codeforce_template/src/main.rs";
         let syntax_tree =
             crate::read_file(Path::new(src_path)).expect("failed to read binary target source");
